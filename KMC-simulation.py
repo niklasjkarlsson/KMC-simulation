@@ -190,7 +190,7 @@ def do_animation(simulator, skip):
     fig.suptitle(f'KMC-animation ({T} K)')
     plt.show()
     writervideo = animation.FFMpegWriter(fps=60)
-    anim.save('increasingStraightLine.mp4', writer=writervideo)
+    anim.save(f'KMC-animation{T}K.mp4', writer=writervideo)
     plt.close()
         
 class Simulator:
