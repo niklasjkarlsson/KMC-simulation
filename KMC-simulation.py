@@ -3,32 +3,31 @@ import random
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from matplotlib import cm
-from IPython.display import HTML#, image
 from threading import Thread
 from queue import Queue
-from matplotlib import rc
 
+random.seed(42)
 
 
 # List of parameters:
 
-step_height = 1                     # Height difference of terraces for the periodic boundary condition
-T = 1750                            # Temperature
-k = 1.380649*(10**(-23))            # Boltzmann constant
-N = 100                             # Size of lattice
-v = 10**(13)                        # Adatoms' vibration frequency
-na =  0 #N**2 // 100                    # Initial number of adatoms
-ac = na / (N**2)                    # Initial adatom concentration
-E_S = 1.3*1.60217663*(10**(-19))    # Substrates potential energy
-E_N = 1.0*1.60217663*(10**(-19))    # Interaction energy
-ads_rate = 20                       # Rate of adsorption
-total_ads_rate = ads_rate * N**2    # Total adsorption rate
-steps = 1000000                     # Number of simulation steps
-animationskip = 3000                # simulation steps skipped between frames in animation
-timeskip = 0.00005                 # time skipped between frames in animation
-adslist = np.array([50, 100, 150, 200])
+step_height = 1                                 # Height difference of terraces for the periodic boundary condition
+T = 750                                         # Temperature
+k = 1.380649*(10**(-23))                        # Boltzmann constant
+N = 100                                         # Size of lattice
+v = 10**(13)                                    # Adatoms' vibration frequency
+na =  0 #N**2 // 100                            # Initial number of adatoms
+ac = na / (N**2)                                # Initial adatom concentration
+E_S = 1.3*1.60217663*(10**(-19))                # Substrates potential energy
+E_N = 1.0*1.60217663*(10**(-19))                # Interaction energy
+ads_rate = 20                                   # Rate of adsorption
+adskip = 5                                      # adsorptions per animation frame
+adslist = np.array([50, 100, 150, 200])         # Coverage prosentages to save snapshots at, animation ends at last one
+steps = int(adslist[-1] * N**2 /(100*adskip))   # Number of simulation steps
+save = False                                    # Show animation while running if False, save mp4 and png's if True 
 
-# a class to efficiently store adatom coordinates for each event (diffusion or desorption) and amount of neighbouring adatoms
+
+# a class to store adatom coordinates for each event and amount of neighbouring adatoms
 class RateList():
     def __init__(self, rate, event_type):
         self.adatom_to_position = {}
@@ -103,7 +102,7 @@ def get_diff_rate(n):
 def get_des_rate(n):
     return 0 #v*np.exp(-1/(k*T)*(E_S+n*E_N))  # v*np.exp(-1/(k*T)*(n*E_N))
 
-
+# change place of adatom on lattice
 def move_coordinate(x, k):
     x += k
     if x < 0:
@@ -173,35 +172,53 @@ def move_adatom(i, j, lattice):
         lattice[i,j] += 1
         return i,j
 
-def do_animation(simulator, skip):
-    fps = 25
-    fig = plt.figure( figsize=(8,8) )
+def do_animation(simulator):
+    fps = 60
+    fig = plt.figure(1, figsize=(8,8) )
     ax = plt.axes()
     a = simulator.lattice
     im = plt.imshow(a, interpolation='none', aspect='auto', vmin=0, vmax=4, cmap=cm.YlOrRd)
+    vars = []
+    covs = []
 
     time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes, color='black')
+    variance_text = ax.text(0.02, 0.92, '', transform=ax.transAxes, color='black')
     def animate_func(i):
         (frame,t) = simulator.get_frame()
-        time_text.set_text(f'Coverage: {100 * np.sum(frame)/(N**2)} %')
+        vars.append(np.var(frame))
+        covs.append(np.sum(frame)*100/(N**2))
+        print(f'{100 * np.sum(frame)/(N**2):.2f}')   
+        time_text.set_text(f'Coverage: {100 * np.sum(frame)/(N**2):.2f} %')
+        variance_text.set_text(f'Variance: {np.var(frame):.5f}')
         im.set_array(frame)
-        if np.sum(frame) in adslist * (N**2)/100:
+        if np.sum(frame) in adslist * (N**2)/100 and save:
             plt.savefig(f'KMC_cov{100 * np.sum(frame)/N**2}%_T{T}.png', format='png')
 
     anim = animation.FuncAnimation(
                                 fig, 
                                 animate_func, 
-                                frames = 10000,
+                                frames = steps,
                                 interval = 1000 / fps, # in ms
                                 )
     fig.suptitle(f'KMC-animation ({T} K)')
-    plt.show()
-    anim.save('animation.gif', writer='imagemagick', fps=60)
+    if save:
+        writervideo = animation.FFMpegWriter(fps=fps)
+        anim.save(f'KMC-animation{T}K.mp4', writer=writervideo)
+        fig2 = plt.figure(2)
+        fig2.suptitle(f'Height Variance {T} K')
+        plt.plot(covs,vars)
+        plt.xlabel('Coverage')
+        plt.ylabel('Variance')
+        plt.savefig(f'HeightVariance{T}K.png', format='png')
+    else:
+        plt.show()
+        plt.close()
 
         
 class Simulator(Thread):
     def __init__(self):
         super().__init__()
+        self.daemon = True
         self.q = Queue(maxsize=5)
         # set initial time
         self.t = 0
@@ -270,7 +287,6 @@ class Simulator(Thread):
             
         elif event.get_event_type() == "desorption":
             self.lattice[adatom[0], adatom[1]] -= 1
-            print("des")
 
         elif event.get_event_type() == "diffusion":
             o,p = move_adatom(adatom[0], adatom[1], self.lattice)
@@ -280,7 +296,7 @@ class Simulator(Thread):
         update_grid(self.lattice, adatom[0], adatom[1], self.des_rates, self.diff_rates)
 
     def skip(self):
-        while self.adsorptions < 5:
+        while self.adsorptions < adskip:
             self.simulationstep()
         self.adsorptions = 0
 
@@ -295,11 +311,10 @@ class Simulator(Thread):
 
 
 def main():
-
     global simulator
     simulator = Simulator()
     simulator.start()
-    do_animation(simulator, animationskip)
+    do_animation(simulator)
 
 
 
