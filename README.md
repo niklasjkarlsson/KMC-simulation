@@ -13,8 +13,8 @@ periodically in the left–right direction and periodically from top to down as
 steps as follows
 
 	--------
-	    --------
 	        --------
+	                --------
 
 Output can be shown in real time during simulation, or be saved as mp4 by
 changing the save variable from beginning of .py file.
